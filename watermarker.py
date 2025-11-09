@@ -1,10 +1,12 @@
 import sys
 import os
+import platform
+import subprocess
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QFileDialog, QLabel, QMessageBox, QProgressBar,
-    QComboBox, QGroupBox, QRadioButton, QSizePolicy, QSpacerItem
+    QComboBox, QGroupBox, QRadioButton, QSizePolicy, QSpacerItem, QCheckBox
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIntValidator
@@ -21,7 +23,7 @@ class WatermarkWorker(QThread):
     finished_processing = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, input_folder, watermark_type, text_or_path, wm_size_percent, wm_position):
+    def __init__(self, input_folder, watermark_type, text_or_path, wm_size_percent, wm_position, apply_filter=False):
         super().__init__()
         self.input_folder = Path(input_folder)
         self.watermark_type = watermark_type
@@ -125,26 +127,30 @@ class WatermarkWorker(QThread):
 
         if self.watermark_type == 'image':
             # --- Image Watermark Logic ---
-            try:
-                wm_img = Image.open(self.text_or_path) # self.text_or_path is the image path
-            except FileNotFoundError:
-                # If watermark image is missing, we can't proceed with this file
-                return
 
-                # 2. Resize the watermark based on the percentage of the main image width
+            # 1. Open and (Conditionally) Filter the watermark PNG
+            if self.apply_filter:
+                wm_img = self._create_watermark_effect(self.text_or_path)
+                if wm_img is None:
+                    # If filtering failed, skip this file to prevent crashing
+                    return
+            else:
+                # Open image without filtering
+                try:
+                    wm_img = Image.open(self.text_or_path).convert("RGBA")
+                except FileNotFoundError:
+                    return # Skip if file not found
+
+            # 2. Resize the watermark based on the percentage of the main image width
             target_wm_width = int(width * (self.wm_size_percent / 100))
             wm_width, wm_height = wm_img.size
-
-            # Calculate new height to maintain aspect ratio
             target_wm_height = int(wm_height * (target_wm_width / wm_width))
 
             wm_img = wm_img.resize((target_wm_width, target_wm_height))
 
-            # 3. Calculate position
             x, y = self._calculate_position(width, height, target_wm_width, target_wm_height)
 
             # 4. Paste the watermark using its own alpha channel as a mask
-            wm_img = wm_img.convert("RGBA")
             wm_alpha = wm_img.getchannel('A')
             img.paste(wm_img, (x, y), mask=wm_alpha)
 
@@ -263,15 +269,21 @@ class WatermarkApp(QMainWindow):
         position_layout.addStretch()
         global_layout.addLayout(position_layout)
 
+        # Output folder button
+        self.open_output_button = QPushButton("📂 Open Output Folder")
+        self.open_output_button.setEnabled(False) # Initially disabled
+        self.open_output_button.clicked.connect(self.open_output_directory)
+
         # Status and Progress
         self.process_button = QPushButton("🚀 Start Watermarking")
         self.process_button.clicked.connect(self.start_watermarking)
         self.progress_bar = QProgressBar()
-        self.progress_bar.setAlignment(Qt.AlignCenter)
+        self.progress_bar.setAlignment(Qt.AlignCenter) # not an attribute error, Qt accesses through nested class
         self.status_label = QLabel("Ready. Select a folder and configure the watermark.")
 
         global_layout.addWidget(self.process_button)
         global_layout.addWidget(self.progress_bar)
+        global_layout.addWidget(self.open_output_button)
         global_layout.addWidget(self.status_label)
         main_layout.addWidget(global_group)
 
@@ -279,6 +291,8 @@ class WatermarkApp(QMainWindow):
 
         self.watermark_thread = None
 
+
+    # --- 2. Main GUI Window (PySide6) ---
 
     def _create_text_config_ui(self):
         """Creates the configuration widget for text watermarks."""
@@ -330,8 +344,19 @@ class WatermarkApp(QMainWindow):
         size_layout.addWidget(QLabel("% (Maintains Aspect Ratio)"))
         size_layout.addStretch()
         layout.addLayout(size_layout)
+        # layout.addStretch()
+
+        # Filter Group
+        filter_group = QGroupBox("Filter Options")
+        filter_layout = QVBoxLayout(filter_group)
+        self.filter_checkbox = QCheckBox("Apply B&W + 50% Opacity Filter")
+        filter_layout.addWidget(self.filter_checkbox)
+        layout.addWidget(filter_group)
+
         layout.addStretch()
         return widget
+
+
 
     def update_watermark_ui(self):
         """Switches between text and image configuration widgets."""
@@ -359,6 +384,7 @@ class WatermarkApp(QMainWindow):
         """Initiates the watermarking process, collecting all parameters."""
         input_folder = self.input_folder_line.text()
         wm_position = self.position_combo.currentText()
+        apply_filter = False
 
         # Basic Validation
         if not input_folder or not os.path.isdir(input_folder):
@@ -370,8 +396,6 @@ class WatermarkApp(QMainWindow):
             watermark_type = 'text'
             text_or_path = self.text_line.text().strip()
 
-            # --- NEW LINE HERE ---
-            # Get the user-specified percentage for text size
             text_size_input = self.text_size_percent_line.text() or "6"
             wm_size_percent = int(text_size_input)
 
@@ -382,6 +406,7 @@ class WatermarkApp(QMainWindow):
             watermark_type = 'image'
             text_or_path = self.image_path_line.text().strip()
             wm_size_percent = int(self.size_percent_line.text() or 10)
+            apply_filter = self.filter_checkbox.isChecked()
             if not text_or_path or not os.path.isfile(text_or_path):
                 QMessageBox.warning(self, "Input Error", "Please select a valid PNG watermark file.")
                 return
@@ -393,17 +418,55 @@ class WatermarkApp(QMainWindow):
 
         # Start the worker thread
         self.watermark_thread = WatermarkWorker(
-            input_folder, watermark_type, text_or_path, wm_size_percent, wm_position
+            input_folder,
+            watermark_type,
+            text_or_path,
+            wm_size_percent,
+            wm_position,
+            apply_filter=apply_filter
         )
         self.watermark_thread.progress_updated.connect(self.progress_bar.setValue)
         self.watermark_thread.finished_processing.connect(self.on_processing_complete)
         self.watermark_thread.error_occurred.connect(self.on_processing_error)
         self.watermark_thread.start()
 
+    def open_output_directory(self):
+        """Opens the watermarked_output folder in the user's file explorer."""
+        input_folder = self.input_folder_line.text()
+        if not input_folder:
+            QMessageBox.warning(self, "Error", "No input folder selected.")
+            return
+
+        # Define the path to the output folder
+        output_dir = Path(input_folder) / "watermarked_output"
+
+        if not output_dir.exists():
+            QMessageBox.warning(self, "Error", "Output folder not found yet. Run the process first.")
+            return
+
+        # Use platform-specific commands to open the directory
+        system = platform.system()
+        try:
+            if system == "Windows":
+                # Windows command: explorer /select, or just explorer for directory
+                subprocess.Popen(['explorer', str(output_dir)])
+            elif system == "Darwin":
+                # macOS command
+                subprocess.Popen(['open', str(output_dir)])
+            else:
+                # Linux command (works for most modern distros)
+                subprocess.Popen(['xdg-open', str(output_dir)])
+        except FileNotFoundError:
+            QMessageBox.critical(self, "Error", "Could not find file explorer command.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open directory: {e}")
+
+
     def on_processing_complete(self, message):
         """Handles successful completion."""
         self.status_label.setText(f"✅ DONE! {message}")
         self.process_button.setEnabled(True)
+        self.open_output_button.setEnabled(True)
         QMessageBox.information(self, "Success", message)
 
     def on_processing_error(self, message):
@@ -411,6 +474,7 @@ class WatermarkApp(QMainWindow):
         self.status_label.setText(f"❌ ERROR: {message}")
         self.progress_bar.setValue(0)
         self.process_button.setEnabled(True)
+        self.open_output_button.setEnabled(False)
         QMessageBox.critical(self, "Error", message)
 
 
