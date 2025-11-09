@@ -10,7 +10,7 @@ Build commands
 
 macOS
 <br>
-pyinstaller --onefile --windowed --add-data "fonts:fonts" --icon=app_icon.icns --name "WaterMarkr_v1.0.0" watermarker_app.py
+pyinstaller --onefile --windowed --add-data "fonts:fonts" --icon=app_icon.icns --name "WaterMarkr_v1.0.0_macOS" watermarker_app.py
 <br>
 windows
 <br>
