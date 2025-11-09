@@ -9,7 +9,10 @@ The app accepts as input a folder containing images and outputs those images in 
 Build commands
 
 macOS
+<br>
 pyinstaller --onefile --windowed --add-data "fonts:fonts" --icon=app_icon.icns --name "WaterMarkr_v1.0.0" watermarker_app.py
+<br>
 windows
+<br>
 pyinstaller --onefile --windowed --add-data "fonts;fonts" --icon=app_icon.ico --name "WaterMarkr_v1.0.0_windows" watermarker_app.py
 
