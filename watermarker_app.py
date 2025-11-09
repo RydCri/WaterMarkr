@@ -14,6 +14,10 @@ from PySide6.QtGui import QIntValidator
 # Pillow for Image Processing
 from PIL import Image, ImageDraw, ImageFont
 
+# --- Centralized Font Configuration ---
+# You only need to change this line to add a new font later
+FONT_FILENAME = "arial.ttf"
+FONT_FOLDER = "fonts"
 
 # --- 1. Watermarking Worker Thread (Core Logic) ---
 
@@ -172,11 +176,25 @@ class WatermarkWorker(QThread):
             if font_size == 0:
                 font_size = 5
 
+                # FONTS
+            # 1. Determine the correct base path (PyInstaller production folder)
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                # Use absolute path of the script directory for local testing
+                base_path = os.path.dirname(os.path.abspath(__file__))
+
+            # 2. Construct the absolute font path using variables
+            font_path_absolute = os.path.join(base_path, FONT_FOLDER, FONT_FILENAME)
+
             try:
-                # 4. Load the font
-                font = ImageFont.truetype("./fonts/arial.ttf", font_size)
+                # Load the font using the constructed absolute path
+                font = ImageFont.truetype(font_path_absolute, font_size)
             except IOError:
+                # Fallback
                 font = ImageFont.load_default()
+
+
             # Measure text size using the correct Pillow 10+ method
             bbox = draw.textbbox((0, 0), self.text_or_path, font=font)
             textwidth = bbox[2] - bbox[0]
@@ -202,7 +220,7 @@ class WatermarkWorker(QThread):
 class WatermarkApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Batch Image Watermarker")
+        self.setWindowTitle("WaterMarkr")
         self.setGeometry(100, 100, 700, 500)
 
         # Main widget and layout
@@ -327,7 +345,7 @@ class WatermarkApp(QMainWindow):
         # File Selection
         file_layout = QHBoxLayout()
         self.image_path_line = QLineEdit()
-        self.image_path_line.setPlaceholderText("Select the transparent PNG watermark file...")
+        self.image_path_line.setPlaceholderText("Select desired PNG watermark file...")
         image_browse_button = QPushButton("Browse PNG...")
         image_browse_button.clicked.connect(self.select_image_watermark)
         file_layout.addWidget(QLabel("Image File:"))
@@ -347,11 +365,12 @@ class WatermarkApp(QMainWindow):
         # layout.addStretch()
 
         # Filter Group
-        filter_group = QGroupBox("Filter Options")
+        filter_group = QGroupBox("Options")
         filter_layout = QVBoxLayout(filter_group)
-        self.filter_checkbox = QCheckBox("Apply B&W + 50% Opacity Filter")
+        self.filter_checkbox = QCheckBox("Greyscale + 50% Opacity Filter")
         filter_layout.addWidget(self.filter_checkbox)
         layout.addWidget(filter_group)
+        file_layout.addWidget(QLabel(""))
 
         layout.addStretch()
         return widget
